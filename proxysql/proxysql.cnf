@@ -1,0 +1,63 @@
+datadir="/var/lib/proxysql"
+
+# Admin 接口（6032）：用 SQL 协议管理 ProxySQL 自己
+admin_variables=
+{
+    admin_credentials="admin:admin"
+    mysql_ifaces="0.0.0.0:6032"
+}
+
+# Proxy 接口（6033）：业务连这个，ProxySQL 转发到后端
+mysql_variables=
+{
+    threads=4
+    max_connections=2048
+    interfaces="0.0.0.0:6033"
+    default_schema="information_schema"
+    server_version="8.0.40"
+    # 用这个账号定期查后端 @@read_only，判定谁是 master
+    monitor_username="monitor"
+    monitor_password="monitor"
+    monitor_read_only_interval=1500   # 每 1.5 秒检查一次 read_only
+    monitor_read_only_timeout=500
+    ping_interval_server_msec=10000
+    connect_retries_on_failure=10
+}
+
+# 后端 MySQL 节点
+mysql_servers =
+(
+    { address="mysql-master", port=3306, hostgroup=10, max_connections=200 },
+    { address="mysql-slave",  port=3306, hostgroup=20, max_connections=200 }
+)
+
+# 业务侧用户（应用用这个连 ProxySQL）
+mysql_users =
+(
+    {
+        username="root"
+        password="root"
+        default_hostgroup=10    # 默认走写组，被规则改写时去读组
+        max_connections=1000
+        active=1
+    }
+)
+
+# 查询路由规则（按 SQL 正则匹配）
+mysql_query_rules =
+(
+    # SELECT ... FOR UPDATE 必须走主（要持锁）
+    { rule_id=1, active=1, match_pattern="^SELECT .* FOR UPDATE$", destination_hostgroup=10, apply=1 },
+    # 普通 SELECT 走读组
+    { rule_id=2, active=1, match_pattern="^SELECT", destination_hostgroup=20, apply=1 }
+    # 其他（INSERT/UPDATE/DELETE/BEGIN/COMMIT）走默认 hostgroup=10（写组）
+)
+
+# 主从自动探测：ProxySQL 持续查每个后端的 @@read_only
+# read_only=0 → 自动归入 writer_hostgroup (10)
+# read_only=1 → 自动归入 reader_hostgroup (20)
+# 这就是 failover 自动切换的关键！
+mysql_replication_hostgroups =
+(
+    { writer_hostgroup=10, reader_hostgroup=20, comment="ha-arch mysql cluster" }
+)

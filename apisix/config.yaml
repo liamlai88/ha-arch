@@ -1,0 +1,34 @@
+apisix:
+  node_listen: 9080              # 业务流量入口
+  enable_admin: true             # 启用 Admin API
+  enable_ipv6: false
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml        # ★ Standalone 模式：从 apisix.yaml 读路由配置
+  admin:
+    admin_key:
+      - name: admin
+        key: ha-arch-admin-key   # ★ 调 Admin API 时用这个 key（演示用，生产强密码）
+        role: admin
+
+# 内置插件白名单（明确启用以便审计）
+plugins:
+  - prometheus
+  - limit-req
+  - key-auth
+  - api-breaker
+  - cors
+  - proxy-rewrite     # URI 改写（演示 /secure/product → /product）
+
+# Prometheus 抓取的指标端口（独立于业务端口）
+plugin_attr:
+  prometheus:
+    export_addr:
+      ip: "0.0.0.0"
+      port: 9091
+    metrics:
+      http_status:
+        extra_labels:
+          - upstream_addr: $upstream_addr

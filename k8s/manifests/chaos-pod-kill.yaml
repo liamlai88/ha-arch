@@ -1,0 +1,20 @@
+# 实验 1：每 20 秒随机杀 1 个 Pod，持续 60 秒
+# Chaos Mesh 2.x：用 Schedule 资源包装重复性实验
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: pod-kill-schedule
+  namespace: default
+spec:
+  schedule: '@every 20s'        # 每 20 秒触发一次
+  historyLimit: 5
+  concurrencyPolicy: Allow
+  type: PodChaos
+  podChaos:
+    action: pod-kill            # 强制杀掉（不是 graceful shutdown）
+    mode: one                   # 一次只杀 1 个（爆炸半径最小）
+    selector:
+      namespaces:
+        - default
+      labelSelectors:
+        app: product

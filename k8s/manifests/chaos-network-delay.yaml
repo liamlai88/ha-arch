@@ -1,0 +1,21 @@
+# 实验 2：注入 500ms 网络延迟
+# 假设：所有出向流量加 500ms 延迟，客户端 P99 应该 > 500ms（说明延迟生效）
+# 但 HPA 不会扩容（CPU 没涨，HPA 只看 CPU）
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-delay-experiment
+  namespace: default
+spec:
+  action: delay                # 注入延迟（其他选项：loss/duplicate/corrupt/partition）
+  mode: all                    # 对所有匹配的 Pod 注入
+  selector:
+    namespaces:
+      - default
+    labelSelectors:
+      app: product
+  delay:
+    latency: '500ms'           # 延迟 500ms
+    jitter: '50ms'             # 抖动 ±50ms
+    correlation: '50'          # 相邻包延迟的相关性 50%
+  duration: '60s'

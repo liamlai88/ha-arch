@@ -1,0 +1,78 @@
+# 两个独立的 Deployment（v1 + v2），共用 Service product-svc
+# Selector 关键：Service 按 app=product 选两批 Pod，Istio 按 version 标签做子集
+
+---
+# v1 Deployment（替代原 product-app）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-app-v1
+  labels:
+    app: product
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: product           # ← Service 看这个
+        version: v1            # ← Istio DestinationRule 看这个
+    spec:
+      containers:
+      - name: app
+        image: k8s-demo:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: APP_VERSION
+          value: "v1"
+        resources:
+          requests: { cpu: 100m, memory: 32Mi }
+          limits: { cpu: 500m, memory: 128Mi }
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8080 }
+          initialDelaySeconds: 1
+          periodSeconds: 3
+
+---
+# v2 Deployment（新版）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-app-v2
+  labels:
+    app: product
+    version: v2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: product
+        version: v2
+    spec:
+      containers:
+      - name: app
+        image: k8s-demo:v1     # 镜像一样，env 不同即可演示
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: APP_VERSION
+          value: "v2"          # ★ 关键区别
+        resources:
+          requests: { cpu: 100m, memory: 32Mi }
+          limits: { cpu: 500m, memory: 128Mi }
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8080 }
+          initialDelaySeconds: 1
+          periodSeconds: 3

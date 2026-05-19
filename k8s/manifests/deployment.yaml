@@ -1,0 +1,54 @@
+# Deployment：声明"我要 3 个 product-app Pod"
+# Controller 会持续 reconcile 直到这个状态成立
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-app
+  labels:
+    app: product
+spec:
+  replicas: 3                # ★ 期望 3 个 Pod，少了自动补，多了自动杀
+  # ★ 滚动更新策略（默认值也是这个，写出来便于理解）
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1             # 更新时最多多出 1 个 Pod
+      maxUnavailable: 0       # 更新时不能有 Pod 不可用（保证容量）
+  selector:
+    matchLabels:
+      app: product            # 这个 Deployment 管理所有 app=product 的 Pod
+  template:                   # Pod 模板：新建 Pod 时按这个长
+    metadata:
+      labels:
+        app: product          # 必须和 selector 一致
+    spec:
+      containers:
+      - name: app
+        image: k8s-demo:v1
+        imagePullPolicy: IfNotPresent   # k3d 导入的镜像本地有就用，别去拉
+        ports:
+        - containerPort: 8080
+        env:
+        - name: APP_VERSION
+          value: "v1"
+        # ★ 资源 requests/limits 是 HPA 的前提
+        resources:
+          requests:
+            cpu: 100m         # 0.1 核（HPA 计算"利用率"的分母）
+            memory: 32Mi
+          limits:
+            cpu: 500m         # 单 Pod 最多吃 0.5 核
+            memory: 128Mi
+        # 健康探针
+        livenessProbe:        # 不健康 → 重启容器
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        readinessProbe:       # 没 ready → Service 不分流
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 3

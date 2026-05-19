@@ -1,0 +1,20 @@
+# 实验 3：CPU 打满（不需要 k6 自己打流量）
+# 假设：CPU 打满会触发 HPA 扩容
+# 这是验证 HPA 在"非真实流量"场景下也能正确工作（运维场景：误占 CPU 的旁路进程）
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: cpu-stress-experiment
+  namespace: default
+spec:
+  mode: one                    # 只对 1 个 Pod 打 CPU
+  selector:
+    namespaces:
+      - default
+    labelSelectors:
+      app: product
+  stressors:
+    cpu:
+      workers: 2               # 2 个 stress-ng worker（双核打满）
+      load: 100                # 每个 worker 100% CPU
+  duration: '120s'             # 持续 2 分钟，给 HPA 充足反应时间

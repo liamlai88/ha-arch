@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 构建产物
+*.bak
+/tmp/
+.cache/
+
+# 本地敏感配置（如果有）
+*.local.yml
+*.local.yaml
+secrets/
+*.pem
+*.key
+
+# 测试/日志输出
+loadtest/results/
+logs/
+*.log
+
+# Go
+vendor/
+*.test
+*.out

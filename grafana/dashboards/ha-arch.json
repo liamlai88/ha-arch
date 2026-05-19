@@ -1,0 +1,103 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "总 QPS",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(rate(product_requests_total[30s]))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 0}},
+      "options": {"colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat",
+      "title": "错误率",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "(sum(rate(product_requests_total{status!~\"2..\"}[1m])) or vector(0)) / sum(rate(product_requests_total[1m]))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 4, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.001}, {"color": "red", "value": 0.01}]}}},
+      "options": {"colorMode": "background"}
+    },
+    {
+      "type": "stat",
+      "title": "缓存命中率",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "sum(rate(product_cache_total{result=\"hit\"}[1m])) / sum(rate(product_cache_total[1m]))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 4, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.9}, {"color": "green", "value": 0.99}]}}},
+      "options": {"colorMode": "background"}
+    },
+    {
+      "type": "stat",
+      "title": "DB 穿透 QPS",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "rate(product_db_queries_total[30s])", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}},
+      "options": {"colorMode": "value"}
+    },
+    {
+      "type": "timeseries",
+      "title": "QPS（按实例）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{"expr": "sum by (instance) (rate(product_requests_total[30s]))", "refId": "A", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "请求延迟 P95 / P99（按实例）",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (instance, le) (rate(product_request_duration_seconds_bucket[1m])))", "refId": "A", "legendFormat": "p95 {{instance}}"},
+        {"expr": "histogram_quantile(0.99, sum by (instance, le) (rate(product_request_duration_seconds_bucket[1m])))", "refId": "B", "legendFormat": "p99 {{instance}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "缓存 HIT vs MISS",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [{"expr": "sum by (result) (rate(product_cache_total[30s]))", "refId": "A", "legendFormat": "{{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Nginx 活跃连接 / 请求速率",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [
+        {"expr": "nginx_connections_active", "refId": "A", "legendFormat": "active"},
+        {"expr": "rate(nginx_http_requests_total[30s])", "refId": "B", "legendFormat": "req/s"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis 各节点命令速率 (含角色)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [
+        {"expr": "rate(redis_commands_processed_total[30s])", "refId": "A", "legendFormat": "{{redis_instance}} ({{role}})"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "MySQL 连接 / 慢查询",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {"expr": "mysql_global_status_threads_connected", "refId": "A", "legendFormat": "connected"},
+        {"expr": "rate(mysql_global_status_slow_queries[1m])", "refId": "B", "legendFormat": "slow q/s"}
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["ha-arch"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "HA-Arch 综合大盘",
+  "uid": "ha-arch-main",
+  "version": 1
+}

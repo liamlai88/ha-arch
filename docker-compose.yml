@@ -1,0 +1,393 @@
+name: ha-arch
+
+services:
+  # ---------- MySQL 主从 + ProxySQL ----------
+  mysql-master:
+    image: mysql:8.0
+    container_name: ha-arch-mysql-master
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql/master.cnf:/etc/mysql/conf.d/master.cnf:ro
+      - ./mysql/init-master.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql-master-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 20s
+
+  mysql-slave:
+    image: mysql:8.0
+    container_name: ha-arch-mysql-slave
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql/slave.cnf:/etc/mysql/conf.d/slave.cnf:ro
+      - ./mysql/init-slave.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql-slave-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+
+  proxysql:
+    image: proxysql/proxysql:2.7.1
+    container_name: ha-arch-proxysql
+    ports:
+      - "6033:6033"   # 业务流量
+      - "6032:6032"   # admin
+    volumes:
+      - ./proxysql/proxysql.cnf:/etc/proxysql.cnf:ro
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      mysql-slave:
+        condition: service_healthy
+
+  # ---------- Redis 主从 + Sentinel ----------
+  redis-master:
+    image: redis:7-alpine
+    container_name: ha-arch-redis-master
+    command: ["redis-server", "--port", "6379", "--replica-announce-ip", "redis-master"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  redis-replica1:
+    image: redis:7-alpine
+    container_name: ha-arch-redis-replica1
+    command: ["redis-server", "--port", "6379", "--replicaof", "redis-master", "6379", "--replica-announce-ip", "redis-replica1"]
+    depends_on:
+      redis-master:
+        condition: service_healthy
+
+  redis-replica2:
+    image: redis:7-alpine
+    container_name: ha-arch-redis-replica2
+    command: ["redis-server", "--port", "6379", "--replicaof", "redis-master", "6379", "--replica-announce-ip", "redis-replica2"]
+    depends_on:
+      redis-master:
+        condition: service_healthy
+
+  sentinel-1:
+    image: redis:7-alpine
+    container_name: ha-arch-sentinel-1
+    # 把只读 conf 复制到可写目录（Sentinel 启动后会改写自己的 conf）
+    command: ["sh", "-c", "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"]
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    depends_on:
+      - redis-master
+      - redis-replica1
+      - redis-replica2
+
+  sentinel-2:
+    image: redis:7-alpine
+    container_name: ha-arch-sentinel-2
+    command: ["sh", "-c", "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"]
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    depends_on:
+      - redis-master
+      - redis-replica1
+      - redis-replica2
+
+  sentinel-3:
+    image: redis:7-alpine
+    container_name: ha-arch-sentinel-3
+    command: ["sh", "-c", "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf"]
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    depends_on:
+      - redis-master
+      - redis-replica1
+      - redis-replica2
+
+  app1:
+    build: ./app
+    container_name: ha-arch-app1
+    environment:
+      INSTANCE_ID: app1
+      MYSQL_DSN: "root:root@tcp(proxysql:6033)/shop?parseTime=true"
+      REDIS_SENTINEL_ADDRS: "sentinel-1:26379,sentinel-2:26379,sentinel-3:26379"
+      REDIS_MASTER_NAME: "mymaster"
+      KAFKA_BROKER: "kafka1:9092,kafka2:9092,kafka3:9092"
+      DB_MAX_CONNS: "5"           # ★ 演示用：只允许 5 个 MySQL 连接，制造瓶颈
+    depends_on:
+      proxysql:
+        condition: service_started
+      kafka1:
+        condition: service_started
+      kafka2:
+        condition: service_started
+      kafka3:
+        condition: service_started
+      sentinel-1:
+        condition: service_started
+      sentinel-2:
+        condition: service_started
+      sentinel-3:
+        condition: service_started
+
+  app2:
+    build: ./app
+    container_name: ha-arch-app2
+    environment:
+      INSTANCE_ID: app2
+      MYSQL_DSN: "root:root@tcp(proxysql:6033)/shop?parseTime=true"
+      REDIS_SENTINEL_ADDRS: "sentinel-1:26379,sentinel-2:26379,sentinel-3:26379"
+      REDIS_MASTER_NAME: "mymaster"
+      KAFKA_BROKER: "kafka1:9092,kafka2:9092,kafka3:9092"
+      DB_MAX_CONNS: "5"           # ★ 演示用：只允许 5 个 MySQL 连接，制造瓶颈
+    depends_on:
+      proxysql:
+        condition: service_started
+      kafka1:
+        condition: service_started
+      kafka2:
+        condition: service_started
+      kafka3:
+        condition: service_started
+      sentinel-1:
+        condition: service_started
+      sentinel-2:
+        condition: service_started
+      sentinel-3:
+        condition: service_started
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ha-arch-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
+
+  # ---------- 消息队列：Kafka 3 broker 集群 (KRaft 模式) ----------
+  #
+  # 三 broker 共同形成 controller quorum（KRaft 内置元数据共识，免 Zookeeper）
+  # 每个 broker 既是 controller 又是 broker（生产建议分离，学习简化）
+  #
+  kafka1:
+    image: bitnamilegacy/kafka:3.7
+    container_name: ha-arch-kafka1
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka1:9092"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # 关键：3 个 broker 必须共享同一个 cluster ID
+      KAFKA_KRAFT_CLUSTER_ID: "ha-arch-kraft-cluster-id-1"
+      # 自动创建 topic 时使用的默认副本因子和最少 ISR
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_CFG_MIN_INSYNC_REPLICAS: 2
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka1-data:/bitnami/kafka
+
+  kafka2:
+    image: bitnamilegacy/kafka:3.7
+    container_name: ha-arch-kafka2
+    environment:
+      KAFKA_CFG_NODE_ID: 2
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka2:9092"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_KRAFT_CLUSTER_ID: "ha-arch-kraft-cluster-id-1"
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_CFG_MIN_INSYNC_REPLICAS: 2
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka2-data:/bitnami/kafka
+
+  kafka3:
+    image: bitnamilegacy/kafka:3.7
+    container_name: ha-arch-kafka3
+    environment:
+      KAFKA_CFG_NODE_ID: 3
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka3:9092"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9093,2@kafka2:9093,3@kafka3:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_KRAFT_CLUSTER_ID: "ha-arch-kraft-cluster-id-1"
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_CFG_MIN_INSYNC_REPLICAS: 2
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka3-data:/bitnami/kafka
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: ha-arch-kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "ha-arch"
+      # 注意：列出所有 3 个 broker，让 UI 拉到完整 metadata
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka1:9092,kafka2:9092,kafka3:9092"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+
+  # ---------- 消费者：2 个 worker 演示 partition 分配（3 partition / 2 worker）----------
+  order-worker:
+    build: ./order-worker
+    container_name: ha-arch-order-worker
+    environment:
+      MYSQL_DSN: "root:root@tcp(proxysql:6033)/shop?parseTime=true"
+      KAFKA_BROKER: "kafka1:9092,kafka2:9092,kafka3:9092"   # 客户端写多 broker，故障容错
+      RATE_PER_SEC: "200"
+      WORKER_ID: "worker-1"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+      - proxysql
+
+  order-worker-2:
+    build: ./order-worker
+    container_name: ha-arch-order-worker-2
+    environment:
+      MYSQL_DSN: "root:root@tcp(proxysql:6033)/shop?parseTime=true"
+      KAFKA_BROKER: "kafka1:9092,kafka2:9092,kafka3:9092"
+      RATE_PER_SEC: "200"
+      WORKER_ID: "worker-2"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+      - proxysql
+
+  # ---------- API 网关：APISIX (Standalone 模式) ----------
+  apisix:
+    image: apache/apisix:3.11.0-debian
+    container_name: ha-arch-apisix
+    ports:
+      - "9080:9080"   # 业务流量入口（替代直接打 8080 Nginx）
+      - "9091:9091"   # Prometheus 指标
+      - "9180:9180"   # Admin API（生产应内网访问）
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    depends_on:
+      - nginx
+
+  # ---------- 监控栈 ----------
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: ha-arch-node-exporter
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.3
+    container_name: ha-arch-nginx-exporter
+    command:
+      - '--nginx.scrape-uri=http://nginx/stub_status'
+    depends_on:
+      - nginx
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: ha-arch-redis-exporter
+    # 一次性监控 3 个 Redis 节点（master + 2 replica）
+    command:
+      - '--redis.addr=redis://redis-master:6379'
+      - '--check-keys=product:*'
+    depends_on:
+      - redis-master
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: ha-arch-mysqld-exporter
+    command:
+      - '--mysqld.username=exporter:exporter'
+      - '--mysqld.address=mysql-master:3306'
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+
+  mysqld-exporter-slave:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: ha-arch-mysqld-exporter-slave
+    command:
+      - '--mysqld.username=exporter:exporter'
+      - '--mysqld.address=mysql-slave:3306'
+    depends_on:
+      mysql-slave:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: ha-arch-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=3d'
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: ha-arch-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  mysql-master-data:
+  mysql-slave-data:
+  prometheus-data:
+  grafana-data:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:

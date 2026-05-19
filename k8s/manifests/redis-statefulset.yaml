@@ -1,0 +1,58 @@
+# StatefulSet：3 个 Redis 实例，每个独占 1Gi PVC
+# Pod 名：redis-0, redis-1, redis-2（稳定）
+# PVC 名：redis-data-redis-0, redis-data-redis-1, redis-data-redis-2
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis-headless   # ★ 必须指向 Headless Service（为了稳定 DNS）
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis              # 必须和 selector 匹配
+    spec:
+      # ★ 终止时给客户端 30 秒 graceful shutdown
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+          - redis-server
+          - --appendonly        # 开启 AOF 持久化（演示用，宕机不丢数据）
+          - "yes"
+          - --dir
+          - /data
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: redis-data      # ★ 这里的 name 必须和下面 volumeClaimTemplates 的 name 一致
+          mountPath: /data
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 5
+          periodSeconds: 3
+  # ★ PVC 模板：每个 Pod 自动获得独立 PVC
+  # PVC 名 = redis-data-<pod-name>，例如 redis-data-redis-0
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]   # 单节点读写（local-path 不支持多挂载）
+      resources:
+        requests:
+          storage: 1Gi
+      # storageClassName 不指定就用集群默认（k3d 默认 local-path）

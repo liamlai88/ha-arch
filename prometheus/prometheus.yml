@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: nginx
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+
+  # APISIX 自带 prometheus 插件，metrics 在 9091
+  - job_name: apisix
+    metrics_path: /apisix/prometheus/metrics
+    static_configs:
+      - targets: ['apisix:9091']
+
+  # 多目标抓取：一个 exporter 监控 3 个 Redis 节点
+  # 每次 scrape 时 Prometheus 把目标地址通过 ?target= 传给 exporter
+  - job_name: redis
+    metrics_path: /scrape
+    static_configs:
+      - targets:
+          - redis-master:6379
+          - redis-replica1:6379
+          - redis-replica2:6379
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: redis_instance
+      - target_label: __address__
+        replacement: redis-exporter:9121
+
+  - job_name: mysql
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+        labels:
+          mysql_role: master
+      - targets: ['mysqld-exporter-slave:9104']
+        labels:
+          mysql_role: slave
+
+  - job_name: app
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['app1:8080', 'app2:8080']
+        labels:
+          service: product-service

@@ -1,0 +1,92 @@
+#
+# ============================================================
+# APISIX Standalone 配置（这个文件改动后 APISIX 自动重载，无需重启）
+# ============================================================
+#
+
+# ---- 上游：后端 Nginx ----
+upstreams:
+  - id: nginx_upstream
+    type: roundrobin
+    nodes:
+      "nginx:80": 1
+
+# ---- 消费者：用于 key-auth 鉴权 ----
+consumers:
+  - username: demo_user
+    plugins:
+      key-auth:
+        key: "secret-key-123"
+
+# ---- 路由 ----
+routes:
+  #
+  # 1. /product：公开访问，但限流 + 熔断
+  #    演示 Step 4（限流）和 Step 6（熔断）
+  #
+  - id: product_public
+    uri: /product
+    upstream_id: nginx_upstream
+    plugins:
+      # 限流：10 req/s 漏桶，burst=5（允许短暂突发到 15）
+      # 超出立即拒绝，返回 429
+      limit-req:
+        rate: 10
+        burst: 5
+        key_type: var
+        key: remote_addr        # 按客户端 IP 限
+        rejected_code: 429
+      # 熔断：上游连续 3 次返回 5xx → 触发熔断 5 秒
+      api-breaker:
+        break_response_code: 503
+        unhealthy:
+          http_statuses: [500, 502, 503, 504]
+          failures: 3
+        healthy:
+          http_statuses: [200]
+          successes: 2
+        max_breaker_sec: 5
+
+  #
+  # 2. /secure/product：需要 API Key 才能访问
+  #    演示 Step 5（鉴权）
+  #
+  - id: product_secure
+    uri: /secure/product
+    upstream_id: nginx_upstream
+    plugins:
+      key-auth: {}              # 启用 key-auth，规则在 consumer 里
+      # 转发到后端时，URL 改写成 /product（去掉 /secure/ 前缀）
+      proxy-rewrite:
+        uri: /product
+
+  #
+  # 3. /health：完全透传，无任何插件（基线对照）
+  #
+  - id: health
+    uri: /health
+    upstream_id: nginx_upstream
+
+  #
+  # 4. /order: 异步下单，POST 走 Kafka 路径（无限流，因为目标就是高吞吐削峰）
+  #
+  - id: order_async
+    uri: /order
+    methods: ["POST"]
+    upstream_id: nginx_upstream
+
+  #
+  # 5. /order/sync: 同步下单对照组（同样不限流，让你看到 DB 被打挂）
+  #
+  - id: order_sync
+    uri: /order/sync
+    methods: ["POST"]
+    upstream_id: nginx_upstream
+
+# ---- 全局插件（所有路由都走）----
+global_rules:
+  - id: global-prometheus
+    plugins:
+      prometheus:
+        prefer_name: true       # 用 route 的 name/id 当 label
+#END

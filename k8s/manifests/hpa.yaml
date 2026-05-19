@@ -1,0 +1,36 @@
+# HPA: Horizontal Pod Autoscaler
+# 监控 product-app 的平均 CPU 利用率，超过 50% 就扩，低于就缩
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: product-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: product-app
+  minReplicas: 2          # ★ 最少 2 个（注意：低于当前 3 副本，闲置时会缩到 2）
+  maxReplicas: 10         # ★ 最多 10 个，避免暴扩
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        # ★ 平均 CPU > 100m × 50% = 50m 时扩容
+        # 我们配的 requests.cpu=100m，所以 50% = 50m
+        averageUtilization: 50
+  behavior:
+    # ★ 扩容快，缩容慢（生产标配）
+    scaleUp:
+      stabilizationWindowSeconds: 0    # 不等待，立刻扩
+      policies:
+      - type: Percent
+        value: 100        # 每次最多翻倍
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 60   # 等 60 秒确认负载真的降下来了才缩
+      policies:
+      - type: Percent
+        value: 50         # 每次最多减半
+        periodSeconds: 30

@@ -1,0 +1,14 @@
+# Service：稳定的虚拟 IP + 负载均衡
+# 通过 selector 自动找到所有 app=product 的 Pod 当后端
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-svc
+spec:
+  type: NodePort              # 暴露到 node 的固定端口（外部能访问）
+  selector:
+    app: product              # ★ 流量分发到所有 app=product 的 Pod
+  ports:
+  - port: 80                  # Service 自己的虚拟端口（集群内访问用）
+    targetPort: 8080          # Pod 容器内监听的端口
+    nodePort: 30080           # node 上对外暴露的端口（k3d 会把它映射到 host）
